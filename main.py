@@ -82,7 +82,7 @@ async def get_details(id: str = Query(...)):
 
 @app.post("/addanime")
 async def add_anime(payload: Anime = Body(...)):
-    res = await nocodb_request("POST", "records", json=payload.dict())
+    res = await nocodb_request("POST", "records", json=payload.model_dump(mode="json"))
     return res
 
 @app.patch("/editanime/{id}")
