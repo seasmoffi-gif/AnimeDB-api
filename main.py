@@ -8,14 +8,13 @@ from pydantic import BaseModel, Field, HttpUrl
 # --------------------------
 # Config
 # --------------------------
-NOCODB_URL = os.getenv("NOCODB_URL", "http://nocodb.example.com")
-PROJECT = os.getenv("NOCODB_PROJECT", "anime_db")   # NocoDB project
-TABLE = os.getenv("NOCODB_TABLE", "anime")          # NocoDB table
-API_TOKEN = os.getenv("NOCODB_TOKEN", "your_token") # NocoDB API token
+POCKETBASE_URL = os.getenv("POCKETBASE_URL", "http://127.0.0.1:8090")
+POCKETBASE_API_KEY = os.getenv("POCKETBASE_API_KEY", "your_api_key")
+POCKETBASE_COLLECTION = os.getenv("POCKETBASE_COLLECTION", "anime")
 
-headers = {"xc-token": API_TOKEN}
+HEADERS = {"Authorization": f"Bearer {POCKETBASE_API_KEY}"}
 
-app = FastAPI(title="Anime API (NocoDB)")
+app = FastAPI(title="Anime API (PocketBase)")
 
 # --------------------------
 # Models
@@ -44,14 +43,12 @@ class Anime(BaseModel):
     seasons: Optional[str] = None             # JSON string
 
 # --------------------------
-# Helpers
+# Helper
 # --------------------------
-def nocodb_url(endpoint: str) -> str:
-    return f"{NOCODB_URL}/api/v2/tables/{TABLE}/{endpoint}"
-
-async def nocodb_request(method: str, endpoint: str, **kwargs):
+async def pb_request(method: str, endpoint: str, **kwargs):
+    url = f"{POCKETBASE_URL}/api/collections/{POCKETBASE_COLLECTION}/{endpoint}"
     async with httpx.AsyncClient() as client:
-        r = await client.request(method, nocodb_url(endpoint), headers=headers, **kwargs)
+        r = await client.request(method, url, headers=HEADERS, **kwargs)
         if r.status_code >= 400:
             raise HTTPException(status_code=r.status_code, detail=r.text)
         return r.json()
@@ -59,33 +56,50 @@ async def nocodb_request(method: str, endpoint: str, **kwargs):
 # --------------------------
 # Routes
 # --------------------------
-
 @app.get("/movies")
 async def get_movies():
-    data = await nocodb_request("GET", "records", params={"where": "(type,eq,movie)"})
-    return data.get("list", [])
+    res = await pb_request("GET", "records", params={"filter": "type = 'movie'"})
+    return res.get("items", [])
 
 @app.get("/series")
 async def get_series():
-    data = await nocodb_request("GET", "records", params={"where": "(type,eq,series)"})
-    return data.get("list", [])
+    res = await pb_request("GET", "records", params={"filter": "type = 'series'"})
+    return res.get("items", [])
 
 @app.get("/latest")
 async def get_latest():
-    data = await nocodb_request("GET", "records", params={"sort": "-created_at", "limit": 20})
-    return data.get("list", [])
+    res = await pb_request("GET", "records", params={"sort": "-created"})
+    return res.get("items", [])
 
 @app.get("/getdetails")
 async def get_details(id: str = Query(...)):
-    data = await nocodb_request("GET", f"records/{id}")
-    return data
+    res = await pb_request("GET", f"records/{id}")
+    return res
 
 @app.post("/addanime")
 async def add_anime(payload: Anime = Body(...)):
-    res = await nocodb_request("POST", "records", json=payload.model_dump(mode="json"))
+    res = await pb_request("POST", "records", json=payload.model_dump(mode="json"))
     return res
 
 @app.patch("/editanime/{id}")
-async def edit_anime(id: str, payload: dict = Body(...)):
-    res = await nocodb_request("PATCH", f"records/{id}", json=payload)
+async def edit_anime(id: str, payload: Anime = Body(...)):
+    res = await pb_request("PATCH", f"records/{id}", json=payload.model_dump(mode="json", exclude_unset=True))
     return res
+
+@app.get("/stream")
+async def get_stream(id: str = Query(...), season: Optional[int] = None, bolum: Optional[int] = None):
+    rec = await pb_request("GET", f"records/{id}")
+    if rec["type"] == "movie":
+        return {"type": "movie", "links": rec.get("movie_stream_links", [])}
+    ep_num = bolum
+    if season is None or ep_num is None:
+        raise HTTPException(status_code=400, detail="For series, season & episode required")
+    # seasons JSON parse
+    import json
+    seasons = json.loads(rec.get("seasons", "[]"))
+    for s in seasons:
+        if s.get("season") == season:
+            for ep in s.get("episodes", []):
+                if ep.get("number") == ep_num:
+                    return {"type": "series", "season": season, "episode": ep_num, "links": ep.get("stream_links", [])}
+    raise HTTPException(status_code=404, detail="Season/Episode not found")
