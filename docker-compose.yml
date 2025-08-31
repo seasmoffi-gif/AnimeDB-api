@@ -7,20 +7,3 @@ services:
     restart: always
     ports:
       - "8000:8000"
-    environment:
-      - MONGODB_URI=mongodb://localhost:27017
-      - DB_NAME=anime_db
-    depends_on:
-      - mongo
-
-  mongo:
-    image: mongo:6
-    container_name: anime-mongo
-    restart: always
-    volumes:
-      - mongo_data:/data/db
-    ports:
-      - "27017:27017"
-
-volumes:
-  mongo_data:
